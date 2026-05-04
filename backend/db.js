@@ -48,6 +48,8 @@ const db = new sqlite3.Database(dbPath, (err) => {
         });
         db.run(`ALTER TABLE users ADD COLUMN verification_code TEXT`, () => {});
         db.run(`ALTER TABLE users ADD COLUMN verification_expires DATETIME`, () => {});
+        db.run(`ALTER TABLE users ADD COLUMN reset_code TEXT`, () => {});
+        db.run(`ALTER TABLE users ADD COLUMN reset_expires DATETIME`, () => {});
       }
     });
 
@@ -65,6 +67,7 @@ const db = new sqlite3.Database(dbPath, (err) => {
       amenities TEXT,
       hostel_location TEXT,
       hostel_type TEXT,
+      images TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`, (err) => {
       if (err) console.error('Error creating rooms table', err.message);
@@ -72,6 +75,7 @@ const db = new sqlite3.Database(dbPath, (err) => {
         db.run(`ALTER TABLE rooms ADD COLUMN amenities TEXT`, () => { /* Ignore */ });
         db.run(`ALTER TABLE rooms ADD COLUMN hostel_location TEXT`, () => { /* Ignore */ });
         db.run(`ALTER TABLE rooms ADD COLUMN hostel_type TEXT`, () => { /* Ignore */ });
+        db.run(`ALTER TABLE rooms ADD COLUMN images TEXT`, () => { /* Ignore */ });
       }
     });
 

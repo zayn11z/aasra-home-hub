@@ -80,7 +80,10 @@ const Login = () => {
               <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="mt-1.5" />
             </div>
             <div>
-              <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+                <Link to="/forgot-password" className="text-sm text-primary font-medium hover:underline">Forgot password?</Link>
+              </div>
               <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="mt-1.5" />
             </div>
             <Button className="w-full font-semibold py-5 shadow-[var(--shadow-warm)]" disabled={isLoading}>

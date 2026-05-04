@@ -37,6 +37,7 @@ const emptyRoom = {
   amenities: [] as string[],
   description: "",
   imagePreviews: [] as string[],
+  imageFiles: [] as File[],
 };
 
 type EditForm = {
@@ -47,6 +48,9 @@ type EditForm = {
   price: number;
   capacity: number;
   amenities: string[];
+  existingImages: string[];
+  newFiles: File[];
+  newPreviews: string[];
 };
 
 const OwnerRooms = () => {
@@ -77,7 +81,7 @@ const OwnerRooms = () => {
           currentOccupancy: r.current_occupancy || 0,
           amenities: r.amenities || [],
           description: "",
-          images: ["/placeholder.svg"],
+          images: r.images && r.images.length > 0 ? r.images.map((img: string) => `http://localhost:5000${img}`) : ["/placeholder.svg"],
           available: r.status === "available",
         }));
         setRooms(backendRooms);
@@ -116,19 +120,77 @@ const OwnerRooms = () => {
     const files = e.target.files;
     if (!files) return;
     const newPreviews: string[] = [];
+    const newFiles: File[] = [];
     Array.from(files).forEach((file) => {
       if (file.size > 5 * 1024 * 1024) {
         toast({ title: "File too large", description: "Max 5MB per image", variant: "destructive" });
         return;
       }
       newPreviews.push(URL.createObjectURL(file));
+      newFiles.push(file);
     });
-    setForm((prev) => ({ ...prev, imagePreviews: [...prev.imagePreviews, ...newPreviews].slice(0, 5) }));
+    setForm((prev) => ({ 
+      ...prev, 
+      imagePreviews: [...prev.imagePreviews, ...newPreviews].slice(0, 5),
+      imageFiles: [...prev.imageFiles, ...newFiles].slice(0, 5)
+    }));
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const removeImage = (index: number) => {
-    setForm((prev) => ({ ...prev, imagePreviews: prev.imagePreviews.filter((_, i) => i !== index) }));
+    setForm((prev) => ({ 
+      ...prev, 
+      imagePreviews: prev.imagePreviews.filter((_, i) => i !== index),
+      imageFiles: prev.imageFiles.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleEditImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !editForm) return;
+    const newPreviews: string[] = [];
+    const newFiles: File[] = [];
+    Array.from(files).forEach((file) => {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({ title: "File too large", description: "Max 5MB per image", variant: "destructive" });
+        return;
+      }
+      newPreviews.push(URL.createObjectURL(file));
+      newFiles.push(file);
+    });
+    
+    const totalCurrent = editForm.existingImages.length + editForm.newFiles.length;
+    if (totalCurrent + newFiles.length > 5) {
+       toast({ title: "Max 5 images allowed", variant: "destructive" });
+       return;
+    }
+
+    setEditForm((prev) => {
+      if(!prev) return prev;
+      return { 
+        ...prev, 
+        newPreviews: [...prev.newPreviews, ...newPreviews],
+        newFiles: [...prev.newFiles, ...newFiles]
+      };
+    });
+  };
+
+  const removeEditExistingImage = (index: number) => {
+    setEditForm(prev => {
+      if(!prev) return prev;
+      return { ...prev, existingImages: prev.existingImages.filter((_, i) => i !== index) };
+    });
+  };
+
+  const removeEditNewImage = (index: number) => {
+    setEditForm(prev => {
+      if(!prev) return prev;
+      return { 
+        ...prev, 
+        newPreviews: prev.newPreviews.filter((_, i) => i !== index),
+        newFiles: prev.newFiles.filter((_, i) => i !== index)
+      };
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -138,16 +200,21 @@ const OwnerRooms = () => {
       return;
     }
     try {
-      const response = await api.post("/rooms", {
-        hostel_name: form.hostelName,
-        hostel_location: form.hostelLocation,
-        hostel_type: form.hostelType,
-        room_number: form.roomNumber,
-        room_type: form.roomType,
-        capacity: form.capacity,
-        rate: form.price,
-        amenities: form.amenities,
+      const formData = new FormData();
+      formData.append("hostel_name", form.hostelName);
+      formData.append("hostel_location", form.hostelLocation);
+      formData.append("hostel_type", form.hostelType);
+      formData.append("room_number", form.roomNumber);
+      formData.append("room_type", form.roomType);
+      formData.append("capacity", form.capacity.toString());
+      formData.append("rate", form.price.toString());
+      formData.append("amenities", JSON.stringify(form.amenities));
+      
+      form.imageFiles.forEach(file => {
+        formData.append("images", file);
       });
+
+      const response = await api.post("/rooms", formData);
       const r = response.data.room;
       const newRoom: Room = {
         id: String(r.id),
@@ -160,7 +227,7 @@ const OwnerRooms = () => {
         capacity: r.capacity,
         amenities: form.amenities,
         description: form.description,
-        images: form.imagePreviews.length > 0 ? form.imagePreviews : ["/placeholder.svg"],
+        images: r.images && r.images.length > 0 ? r.images.map((img: string) => `http://localhost:5000${img}`) : ["/placeholder.svg"],
         available: true,
       };
       setRooms((prev) => [newRoom, ...prev]);
@@ -182,6 +249,9 @@ const OwnerRooms = () => {
       price: room.price,
       capacity: room.capacity,
       amenities: [...room.amenities],
+      existingImages: room.images.filter(img => img !== "/placeholder.svg").map(img => img.replace('http://localhost:5000', '')),
+      newFiles: [],
+      newPreviews: []
     });
     setEditError("");
   };
@@ -195,18 +265,27 @@ const OwnerRooms = () => {
     }
     setIsSaving(true);
     try {
-      await api.put(`/rooms/${editRoom.id}`, {
-        hostel_location: editForm.hostelLocation,
-        hostel_type: editForm.hostelType,
-        room_number: editForm.roomNumber,
-        room_type: editForm.roomType,
-        capacity: editForm.capacity,
-        rate: editForm.price,
-        amenities: editForm.amenities,
+      const formData = new FormData();
+      formData.append("hostel_location", editForm.hostelLocation);
+      formData.append("hostel_type", editForm.hostelType);
+      formData.append("room_number", editForm.roomNumber);
+      formData.append("room_type", editForm.roomType);
+      formData.append("capacity", editForm.capacity.toString());
+      formData.append("rate", editForm.price.toString());
+      formData.append("amenities", JSON.stringify(editForm.amenities));
+      formData.append("existing_images", JSON.stringify(editForm.existingImages));
+      
+      editForm.newFiles.forEach(file => {
+        formData.append("images", file);
       });
+
+      const res = await api.put(`/rooms/${editRoom.id}`, formData);
+      
+      const updatedImages = res.data.images && res.data.images.length > 0 ? res.data.images.map((img:string) => `http://localhost:5000${img}`) : ["/placeholder.svg"];
+
       setRooms((prev) => prev.map((r) =>
         r.id === editRoom.id
-          ? { ...r, hostelLocation: editForm.hostelLocation, hostelType: editForm.hostelType, roomNumber: editForm.roomNumber, roomType: editForm.roomType, capacity: editForm.capacity, price: editForm.price, amenities: editForm.amenities }
+          ? { ...r, hostelLocation: editForm.hostelLocation, hostelType: editForm.hostelType, roomNumber: editForm.roomNumber, roomType: editForm.roomType, capacity: editForm.capacity, price: editForm.price, amenities: editForm.amenities, images: updatedImages }
           : r
       ));
       setEditRoom(null);
@@ -536,6 +615,35 @@ const OwnerRooms = () => {
                       {a}
                     </label>
                   ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <Label>Room Photos</Label>
+                <div className="flex flex-wrap gap-3">
+                  {editForm.existingImages.map((src, i) => (
+                    <div key={`existing-${i}`} className="relative h-20 w-20 rounded-lg overflow-hidden border border-border group">
+                      <img src={`http://localhost:5000${src}`} alt={`Room photo ${i + 1}`} className="h-full w-full object-cover" />
+                      <button type="button" onClick={() => removeEditExistingImage(i)} className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {editForm.newPreviews.map((src, i) => (
+                    <div key={`new-${i}`} className="relative h-20 w-20 rounded-lg overflow-hidden border border-border group">
+                      <img src={src} alt={`New room photo ${i + 1}`} className="h-full w-full object-cover" />
+                      <button type="button" onClick={() => removeEditNewImage(i)} className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {(editForm.existingImages.length + editForm.newFiles.length) < 5 && (
+                    <label className="h-20 w-20 rounded-lg border-2 border-dashed border-border hover:border-primary flex flex-col items-center justify-center gap-1 text-muted-foreground hover:text-primary transition-colors cursor-pointer">
+                      <ImagePlus className="h-5 w-5" />
+                      <span className="text-[10px]">Upload</span>
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={handleEditImageUpload} />
+                    </label>
+                  )}
                 </div>
               </div>
 

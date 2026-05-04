@@ -3,7 +3,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const db = require('../db');
 const { authenticateToken, roleGuard } = require('../middleware/auth');
 
@@ -276,6 +276,97 @@ router.post('/verify-email', (req, res) => {
         user: { id: user.id, name: user.name, email: user.email, role: user.role }
       });
     });
+  });
+});
+
+// Forgot Password - Send Code
+router.post('/forgot-password', (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: 'Email is required' });
+  }
+
+  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Generate 6-digit reset code
+    const resetCode = crypto.randomInt(100000, 999999).toString();
+    const expires = new Date(Date.now() + 15 * 60000).toISOString(); // 15 mins
+
+    db.run('UPDATE users SET reset_code = ?, reset_expires = ? WHERE id = ?', [resetCode, expires, user.id], async function(err) {
+      if (err) return res.status(500).json({ message: 'Database error generating reset code' });
+
+      try {
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+          }
+        });
+
+        const htmlContent = `
+<div style="font-family: Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px;">
+  <h2 style="color: #111827; margin-top: 0; text-align: center; font-size: 24px;">Aasra</h2>
+  <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">Hi,</p>
+  <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">You requested a password reset. Please use the code below to securely reset your password.</p>
+  <div style="text-align: center; margin: 30px 0;">
+    <span style="display: inline-block; font-size: 32px; font-weight: bold; color: #111827; letter-spacing: 8px; padding: 15px 30px; background-color: #f3f4f6; border-radius: 6px;">${resetCode}</span>
+  </div>
+  <p style="color: #6b7280; font-size: 14px; text-align: center;">This code expires in 15 minutes.</p>
+  <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;" />
+  <p style="color: #9ca3af; font-size: 12px; text-align: center;">If you didn't request a password reset, you can safely ignore this email.</p>
+</div>`;
+
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: email,
+          subject: 'Reset your Aasra Password',
+          html: htmlContent
+        });
+
+        res.json({ message: 'Password reset code sent to your email' });
+      } catch (emailErr) {
+        console.error('Email error:', emailErr);
+        res.status(500).json({ message: 'Failed to send reset email. Please try again later.' });
+      }
+    });
+  });
+});
+
+// Reset Password
+router.post('/reset-password', async (req, res) => {
+  const { email, code, newPassword } = req.body;
+
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ message: 'Email, code, and new password are required' });
+  }
+
+  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    if (!user.reset_code || user.reset_code !== code) {
+      return res.status(400).json({ message: 'Invalid reset code' });
+    }
+
+    if (new Date(user.reset_expires) < new Date()) {
+      return res.status(400).json({ message: 'Reset code expired' });
+    }
+
+    try {
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+      db.run('UPDATE users SET password = ?, reset_code = NULL, reset_expires = NULL WHERE id = ?', [hashedPassword, user.id], function(err) {
+        if (err) return res.status(500).json({ message: 'Database error updating password' });
+        res.json({ message: 'Password updated successfully' });
+      });
+    } catch (hashErr) {
+      res.status(500).json({ message: 'Server error hashing password' });
+    }
   });
 });
 

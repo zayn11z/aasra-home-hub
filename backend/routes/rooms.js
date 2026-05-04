@@ -3,11 +3,32 @@ const db = require('../db');
 const { authenticateToken, roleGuard } = require('../middleware/auth');
 
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = path.join(__dirname, '../uploads/rooms');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
 
 const router = express.Router();
 
 // POST /api/rooms — Create a room (owner only)
-router.post('/', authenticateToken, roleGuard(['owner']), (req, res) => {
+router.post('/', authenticateToken, roleGuard(['owner']), upload.array('images', 5), (req, res) => {
   const { hostel_name, hostel_location, hostel_type, room_number, room_type, capacity, rate, amenities } = req.body;
 
   if (!room_number || !rate || !hostel_name || !hostel_location || !hostel_type) {
@@ -16,13 +37,24 @@ router.post('/', authenticateToken, roleGuard(['owner']), (req, res) => {
 
   const type = room_type || 'Single';
   const cap = capacity || 1;
-  const ams = amenities ? JSON.stringify(amenities) : '[]';
+  let ams = '[]';
+  if (amenities) {
+    try {
+      ams = JSON.stringify(JSON.parse(amenities)); // try parse if stringified JSON array
+    } catch {
+      ams = JSON.stringify(typeof amenities === 'string' ? amenities.split(',') : amenities);
+    }
+  }
+
+  const uploadedImages = req.files ? req.files.map(f => `/uploads/rooms/${f.filename}`) : [];
+  const imagesJson = JSON.stringify(uploadedImages);
 
   db.run(
-    'INSERT INTO rooms (hostel_name, hostel_location, hostel_type, room_number, room_type, capacity, rate, owner_id, amenities) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [hostel_name, hostel_location, hostel_type, room_number, type, cap, rate, req.user.id, ams],
+    'INSERT INTO rooms (hostel_name, hostel_location, hostel_type, room_number, room_type, capacity, rate, owner_id, amenities, images) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [hostel_name, hostel_location, hostel_type, room_number, type, cap, rate, req.user.id, ams, imagesJson],
     function (err) {
       if (err) {
+        console.error('Insert error:', err);
         return res.status(500).json({ message: 'Error creating room' });
       }
       res.status(201).json({
@@ -36,7 +68,8 @@ router.post('/', authenticateToken, roleGuard(['owner']), (req, res) => {
           rate,
           status: 'available',
           owner_id: req.user.id,
-          amenities: amenities || [],
+          amenities: JSON.parse(ams),
+          images: uploadedImages,
           hostel_location,
           hostel_type,
         },
@@ -55,6 +88,7 @@ router.get('/my-room', authenticateToken, (req, res) => {
     if (err) return res.status(500).json({ message: 'Database error' });
     if (!row) return res.status(404).json({ message: 'No room assigned yet' });
     row.amenities = row.amenities ? JSON.parse(row.amenities) : [];
+    row.images = row.images ? JSON.parse(row.images) : [];
     res.json({ room: row });
   });
 });
@@ -89,7 +123,11 @@ router.get('/', (req, res) => {
     if (err) {
       return res.status(500).json({ message: 'Error fetching rooms' });
     }
-    const parsedRows = rows.map(r => ({ ...r, amenities: r.amenities ? JSON.parse(r.amenities) : [] }));
+    const parsedRows = rows.map(r => ({ 
+      ...r, 
+      amenities: r.amenities ? JSON.parse(r.amenities) : [],
+      images: r.images ? JSON.parse(r.images) : []
+    }));
     res.json({ rooms: parsedRows });
   });
 });
@@ -142,9 +180,9 @@ router.put('/:id/assign', authenticateToken, roleGuard(['owner']), (req, res) =>
 });
 
 // PUT /api/rooms/:id — Edit a room (owner only, cannot reduce capacity below occupancy)
-router.put('/:id', authenticateToken, roleGuard(['owner']), (req, res) => {
+router.put('/:id', authenticateToken, roleGuard(['owner']), upload.array('images', 5), (req, res) => {
   const roomId = req.params.id;
-  const { room_number, room_type, capacity, rate, amenities, hostel_location, hostel_type } = req.body;
+  const { room_number, room_type, capacity, rate, amenities, hostel_location, hostel_type, existing_images } = req.body;
 
   // Verify ownership
   db.get('SELECT * FROM rooms WHERE id = ? AND owner_id = ?', [roomId, req.user.id], (err, room) => {
@@ -165,16 +203,46 @@ router.put('/:id', authenticateToken, roleGuard(['owner']), (req, res) => {
       const newType = room_type || room.room_type;
       const newRate = rate !== undefined ? rate : room.rate;
       const newRoomNumber = room_number || room.room_number;
-      const newAmenities = amenities !== undefined ? JSON.stringify(amenities) : room.amenities;
+      let newAmenities = room.amenities;
+      if (amenities !== undefined) {
+        try {
+          newAmenities = JSON.stringify(JSON.parse(amenities));
+        } catch {
+          newAmenities = JSON.stringify(typeof amenities === 'string' ? amenities.split(',') : amenities);
+        }
+      }
       const newLocation = hostel_location || room.hostel_location;
       const newHostelType = hostel_type || room.hostel_type;
 
+      // Handle images
+      let currentImages = room.images ? JSON.parse(room.images) : [];
+      let keptImages = [];
+      if (existing_images) {
+        try {
+          keptImages = JSON.parse(existing_images);
+        } catch {
+          keptImages = typeof existing_images === 'string' ? existing_images.split(',') : existing_images;
+        }
+      }
+
+      // Delete removed images from filesystem
+      const removedImages = currentImages.filter(img => !keptImages.includes(img));
+      removedImages.forEach(img => {
+        const filePath = path.join(__dirname, '..', img);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      });
+
+      const uploadedImages = req.files ? req.files.map(f => `/uploads/rooms/${f.filename}`) : [];
+      const finalImages = JSON.stringify([...keptImages, ...uploadedImages]);
+
       db.run(
-        'UPDATE rooms SET room_number = ?, room_type = ?, capacity = ?, rate = ?, amenities = ?, hostel_location = ?, hostel_type = ? WHERE id = ?',
-        [newRoomNumber, newType, newCapacity, newRate, newAmenities, newLocation, newHostelType, roomId],
+        'UPDATE rooms SET room_number = ?, room_type = ?, capacity = ?, rate = ?, amenities = ?, hostel_location = ?, hostel_type = ?, images = ? WHERE id = ?',
+        [newRoomNumber, newType, newCapacity, newRate, newAmenities, newLocation, newHostelType, finalImages, roomId],
         (err) => {
           if (err) return res.status(500).json({ message: 'Error updating room' });
-          res.json({ message: 'Room updated successfully' });
+          res.json({ message: 'Room updated successfully', images: JSON.parse(finalImages) });
         }
       );
     });
@@ -197,6 +265,17 @@ router.delete('/:id', authenticateToken, roleGuard(['owner']), (req, res) => {
       // Delete messages associated with this room
       db.run('DELETE FROM messages WHERE hostel_id = ?', [roomId], (err) => {
         if (err) console.error("Error clearing room messages:", err);
+
+        // Delete images
+        if (room.images) {
+          const images = JSON.parse(room.images);
+          images.forEach(img => {
+            const filePath = path.join(__dirname, '..', img);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+            }
+          });
+        }
 
         // Delete the room
         db.run('DELETE FROM rooms WHERE id = ?', [roomId], (err) => {
