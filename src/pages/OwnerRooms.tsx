@@ -22,7 +22,7 @@ import {
 import { Plus, Trash2, Upload, Building2, ImagePlus, X, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { Room } from "@/data/mockRooms";
-import api from "@/lib/api";
+import api, { BASE_URL } from "@/lib/api";
 
 const allAmenities = ["WiFi", "AC", "Fan", "Attached Bathroom", "Common Bathroom", "Study Table", "Wardrobe", "Balcony", "Mini Fridge", "Laundry"];
 
@@ -81,7 +81,7 @@ const OwnerRooms = () => {
           currentOccupancy: r.current_occupancy || 0,
           amenities: r.amenities || [],
           description: "",
-          images: r.images && r.images.length > 0 ? r.images.map((img: string) => `http://localhost:5000${img}`) : ["/placeholder.svg"],
+          images: r.images && r.images.length > 0 ? r.images.map((img: string) => `${BASE_URL}${img}`) : ["/placeholder.svg"],
           available: r.status === "available",
         }));
         setRooms(backendRooms);
@@ -227,7 +227,7 @@ const OwnerRooms = () => {
         capacity: r.capacity,
         amenities: form.amenities,
         description: form.description,
-        images: r.images && r.images.length > 0 ? r.images.map((img: string) => `http://localhost:5000${img}`) : ["/placeholder.svg"],
+        images: r.images && r.images.length > 0 ? r.images.map((img: string) => `${BASE_URL}${img}`) : ["/placeholder.svg"],
         available: true,
       };
       setRooms((prev) => [newRoom, ...prev]);
@@ -249,7 +249,7 @@ const OwnerRooms = () => {
       price: room.price,
       capacity: room.capacity,
       amenities: [...room.amenities],
-      existingImages: room.images.filter(img => img !== "/placeholder.svg").map(img => img.replace('http://localhost:5000', '')),
+      existingImages: room.images.filter(img => img !== "/placeholder.svg").map(img => img.replace(BASE_URL, '')),
       newFiles: [],
       newPreviews: []
     });
@@ -281,7 +281,7 @@ const OwnerRooms = () => {
 
       const res = await api.put(`/rooms/${editRoom.id}`, formData);
       
-      const updatedImages = res.data.images && res.data.images.length > 0 ? res.data.images.map((img:string) => `http://localhost:5000${img}`) : ["/placeholder.svg"];
+      const updatedImages = res.data.images && res.data.images.length > 0 ? res.data.images.map((img:string) => `${BASE_URL}${img}`) : ["/placeholder.svg"];
 
       setRooms((prev) => prev.map((r) =>
         r.id === editRoom.id
@@ -623,7 +623,7 @@ const OwnerRooms = () => {
                 <div className="flex flex-wrap gap-3">
                   {editForm.existingImages.map((src, i) => (
                     <div key={`existing-${i}`} className="relative h-20 w-20 rounded-lg overflow-hidden border border-border group">
-                      <img src={`http://localhost:5000${src}`} alt={`Room photo ${i + 1}`} className="h-full w-full object-cover" />
+                      <img src={`${BASE_URL}${src}`} alt={`Room photo ${i + 1}`} className="h-full w-full object-cover" />
                       <button type="button" onClick={() => removeEditExistingImage(i)} className="absolute top-1 right-1 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <X className="h-3 w-3" />
                       </button>
