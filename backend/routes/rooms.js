@@ -9,7 +9,7 @@ const fs = require('fs');
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    const dir = path.join(__dirname, '../uploads/rooms');
+    const dir = process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'uploads/rooms') : path.join(__dirname, '../uploads/rooms');
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -228,7 +228,8 @@ router.put('/:id', authenticateToken, roleGuard(['owner']), upload.array('images
       // Delete removed images from filesystem
       const removedImages = currentImages.filter(img => !keptImages.includes(img));
       removedImages.forEach(img => {
-        const filePath = path.join(__dirname, '..', img);
+        // img is like "/uploads/rooms/file.jpg"
+        const filePath = process.env.DATA_DIR ? path.join(process.env.DATA_DIR, img.replace('/uploads', 'uploads')) : path.join(__dirname, '..', img);
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
         }
@@ -270,7 +271,7 @@ router.delete('/:id', authenticateToken, roleGuard(['owner']), (req, res) => {
         if (room.images) {
           const images = JSON.parse(room.images);
           images.forEach(img => {
-            const filePath = path.join(__dirname, '..', img);
+            const filePath = process.env.DATA_DIR ? path.join(process.env.DATA_DIR, img.replace('/uploads', 'uploads')) : path.join(__dirname, '..', img);
             if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
             }
